@@ -3,7 +3,6 @@ import requests
 import pandas as pd
 import streamlit as st
 import plotly.express as px
-from shapely.geometry import shape
 
 st.set_page_config(
     page_title="전국 고령화·학생 인구 지도",
@@ -11,7 +10,7 @@ st.set_page_config(
 )
 
 st.title("🗺️ 전국 고령화·학생 인구 지도")
-st.caption("시군구별 고령화율(65세 이상)과 만 16~19세 인구 비율")
+st.caption("최신 연도 기준 시군구별 고령화율과 만 16~19세 인구 비율")
 
 POP_URL = "https://raw.githubusercontent.com/greatsong/modudata/main/data/population_yearly.csv.gz"
 GEO_URL = "https://raw.githubusercontent.com/greatsong/modudata/main/data/boundaries/sigungu_kr.geojson"
@@ -64,53 +63,38 @@ df["학생인구"] = df[student_cols].sum(axis=1)
 df["시군구코드"] = df["코드"].str[:5]
 
 grouped = (
-    df.groupby("시군구코드")[["전체인구", "고령인구", "학생인구"]]
+    df.groupby("시군구코드")[
+        ["전체인구", "고령인구", "학생인구"]
+    ]
     .sum()
     .reset_index()
 )
 
 grouped["고령화율"] = (
-    grouped["고령인구"] / grouped["전체인구"] * 100
+    grouped["고령인구"]
+    / grouped["전체인구"]
+    * 100
 )
 
 grouped["학생비율"] = (
-    grouped["학생인구"] / grouped["전체인구"] * 100
+    grouped["학생인구"]
+    / grouped["전체인구"]
+    * 100
 )
 
-regions = []
-centers = []
+names = pd.DataFrame([
+    {
+        "시군구코드": str(f["properties"]["코드"]),
+        "시군구": f["properties"]["시군구"],
+        "시도": f["properties"]["시도"]
+    }
+    for f in geojson["features"]
+])
 
-for feature in geojson["features"]:
-    props = feature["properties"]
-
-    code = str(props["코드"])
-
-    geom = shape(feature["geometry"])
-    centroid = geom.centroid
-
-    regions.append(
-        {
-            "시군구코드": code,
-            "시군구": props["시군구"],
-            "시도": props["시도"]
-        }
-    )
-
-    centers.append(
-        {
-            "시군구코드": code,
-            "lon": centroid.x,
-            "lat": centroid.y
-        }
-    )
-
-names_df = pd.DataFrame(regions)
-center_df = pd.DataFrame(centers)
-
-merged = (
-    grouped
-    .merge(names_df, on="시군구코드", how="left")
-    .merge(center_df, on="시군구코드", how="left")
+merged = grouped.merge(
+    names,
+    on="시군구코드",
+    how="left"
 )
 
 bins = [0, 19, 23, 28, 38, 100]
@@ -130,73 +114,85 @@ merged["고령화단계"] = pd.cut(
     right=False
 )
 
-color_map = {
-    "19% 미만": "#fee6ce",
-    "19~23%": "#fdc086",
-    "23~28%": "#f79646",
-    "28~38%": "#e8590c",
-    "38% 이상": "#a63603"
-}
-
-fig = px.choropleth(
-    merged,
-    geojson=geojson,
-    locations="시군구코드",
-    featureidkey="properties.코드",
-    color="고령화단계",
-    category_orders={"고령화단계": labels},
-    color_discrete_map=color_map,
-    hover_name="시군구",
-    hover_data={
-        "시도": True,
-        "고령화율": ":.1f",
-        "학생비율": ":.1f",
-        "시군구코드": False,
-        "고령화단계": False
-    }
+tab1, tab2 = st.tabs(
+    ["🧓 고령화율 지도", "🎓 학생비율 지도"]
 )
 
-fig.add_scattergeo(
-    lon=merged["lon"],
-    lat=merged["lat"],
-    mode="markers",
-    text=merged["시군구"],
-    customdata=merged[
-        [
-            "시도",
-            "고령화율",
-            "학생비율",
-            "학생인구"
-        ]
-    ],
-    marker=dict(
-        size=merged["학생비율"] * 2,
-        color="blue",
-        opacity=0.45,
-        line=dict(width=0)
-    ),
-    hovertemplate=
-    "<b>%{text}</b><br>"
-    "시도: %{customdata[0]}<br>"
-    "고령화율: %{customdata[1]:.1f}%<br>"
-    "학생비율: %{customdata[2]:.1f}%<br>"
-    "학생수: %{customdata[3]:,.0f}명"
-    "<extra></extra>",
-    showlegend=False
-)
+with tab1:
 
-fig.update_geos(
-    fitbounds="locations",
-    visible=False
-)
+    fig1 = px.choropleth(
+        merged,
+        geojson=geojson,
+        locations="시군구코드",
+        featureidkey="properties.코드",
+        color="고령화단계",
+        category_orders={"고령화단계": labels},
+        color_discrete_map={
+            "19% 미만": "#fee6ce",
+            "19~23%": "#fdc086",
+            "23~28%": "#f79646",
+            "28~38%": "#e8590c",
+            "38% 이상": "#a63603"
+        },
+        hover_name="시군구",
+        hover_data={
+            "시도": True,
+            "고령화율": ":.1f",
+            "학생비율": ":.1f",
+            "시군구코드": False,
+            "고령화단계": False
+        }
+    )
 
-fig.update_layout(
-    height=800,
-    margin=dict(l=0, r=0, t=10, b=0),
-    legend_title_text=f"고령화율 ({latest_year}년)"
-)
+    fig1.update_geos(
+        fitbounds="locations",
+        visible=False
+    )
 
-st.plotly_chart(fig, use_container_width=True)
+    fig1.update_layout(
+        height=750,
+        margin=dict(l=0, r=0, t=10, b=0)
+    )
+
+    st.plotly_chart(
+        fig1,
+        use_container_width=True
+    )
+
+with tab2:
+
+    fig2 = px.choropleth(
+        merged,
+        geojson=geojson,
+        locations="시군구코드",
+        featureidkey="properties.코드",
+        color="학생비율",
+        color_continuous_scale="Blues",
+        hover_name="시군구",
+        hover_data={
+            "시도": True,
+            "학생비율": ":.2f",
+            "학생인구": ":,.0f",
+            "고령화율": ":.1f",
+            "시군구코드": False
+        }
+    )
+
+    fig2.update_geos(
+        fitbounds="locations",
+        visible=False
+    )
+
+    fig2.update_layout(
+        height=750,
+        margin=dict(l=0, r=0, t=10, b=0),
+        coloraxis_colorbar_title="학생비율(%)"
+    )
+
+    st.plotly_chart(
+        fig2,
+        use_container_width=True
+    )
 
 st.markdown("---")
 
@@ -206,7 +202,10 @@ with col1:
     st.subheader("🔴 고령화율 TOP 10")
 
     st.dataframe(
-        merged.nlargest(10, "고령화율")[
+        merged.nlargest(
+            10,
+            "고령화율"
+        )[
             ["시도", "시군구", "고령화율"]
         ].round(2),
         hide_index=True,
@@ -217,7 +216,10 @@ with col2:
     st.subheader("🔵 학생비율 TOP 10")
 
     st.dataframe(
-        merged.nlargest(10, "학생비율")[
+        merged.nlargest(
+            10,
+            "학생비율"
+        )[
             ["시도", "시군구", "학생비율"]
         ].round(2),
         hide_index=True,
